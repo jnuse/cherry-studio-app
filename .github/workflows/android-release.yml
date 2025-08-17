@@ -1,6 +1,6 @@
 # .github/workflows/android-release.yml
 
-name: Build and Release Android APK (Optimized & Self-Contained)
+name: Build and Release Android APK (Final Polished Version)
 
 on:
   push:
@@ -14,18 +14,15 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 步骤 1: 检出代码
       - name: Check out code
         uses: actions/checkout@v4
 
-      # 步骤 2: 设置 Java (JDK) 环境
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
 
-      # 步骤 3: 设置 Gradle 缓存
       - name: Setup Gradle Cache
         uses: actions/cache@v4
         with:
@@ -36,58 +33,50 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-gradle-
 
-      # 步骤 4: 设置 Node.js 环境
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20.x'
 
-      # 步骤 5: 启用 Corepack
       - name: Enable Corepack
         run: corepack enable
 
-      # 步骤 6: 安装项目依赖
       - name: Install dependencies
         run: yarn install --frozen-lockfile
 
-      # 步骤 7: 生成数据库
       - name: Generate database schema
         run: npx drizzle-kit generate
         
-      # 步骤 8: 生成原生安卓项目
       - name: Generate native Android project (prebuild)
         run: npx expo prebuild --platform android --non-interactive
       
-      # ✨✨✨ 最终解决方案：动态注入缺失的 Gradle 配置 ✨✨✨
       - name: Inject missing 'hermesEnabled' property
-        # 这个步骤会在构建前，临时修复 android/build.gradle 文件
         run: |
-          echo "Injecting hermesEnabled property..."
-          # 创建一个临时文件包含要注入的内容
           echo -e "ext {\n    hermesEnabled = true\n}\n" > temp_hermes_config.txt
-          # 将原始 build.gradle 的内容追加到临时文件后
           cat android/build.gradle >> temp_hermes_config.txt
-          # 用包含了新内容的临时文件覆盖原始文件
           mv temp_hermes_config.txt android/build.gradle
-          echo "'hermesEnabled' property successfully injected into android/build.gradle!"
 
-      # 步骤 9: 配置 Gradle 性能参数
-      - name: Configure Gradle for performance
+      # ✨✨✨ 最终修复：注入所有必需的 Gradle 配置 ✨✨✨
+      - name: Configure Gradle properties
         run: |
+          # 写入性能优化参数
           echo "org.gradle.jvmargs=-Xmx4g" > android/gradle.properties
           echo "org.gradle.daemon=true" >> android/gradle.properties
           echo "org.gradle.parallel=true" >> android/gradle.properties
           echo "org.gradle.configureondemand=true" >> android/gradle.properties
+          
+          # ‼️‼️‼️ 写入解决本次错误的关键配置 ‼️‼️‼️
+          echo "android.useAndroidX=true" >> android/gradle.properties
+          
+          echo "Gradle properties configured successfully!"
 
-      # 步骤 10: 使用 Gradle 直接编译 APK
       - name: Build APK with Gradle
         run: |
           cd android
-          chmod +x ./gradlew
+          chmod +x ./gradle.sh # gradlew on linux is a shell script
           ./gradlew assembleRelease
           cd ..
 
-      # 步骤 11: 从标准路径找到 APK
       - name: Find and rename APK
         id: find_apk
         run: |
@@ -101,7 +90,6 @@ jobs:
           mv "$APK_PATH" "$NEW_APK_NAME"
           echo "apk_name=$NEW_APK_NAME" >> $GITHUB_OUTPUT
 
-      # 步骤 12: 创建 Release 并上传 APK
       - name: Create GitHub Release and Upload APK
         uses: softprops/action-gh-release@v2
         with:
