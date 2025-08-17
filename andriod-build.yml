@@ -1,0 +1,89 @@
+# .github/workflows/android-release.yml
+
+name: Build and Release Android APK (Bare Workflow)
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build-and-release:
+    name: Build and Release APK
+    runs-on: ubuntu-latest
+
+    steps:
+      # 步骤 1: 检出代码
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      # 步骤 2: 设置 Java (JDK) 环境
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      # 步骤 3: 设置 Node.js 环境
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+
+      # 步骤 4: 启用 Corepack
+      - name: Enable Corepack
+        run: corepack enable
+
+      # 步骤 5: 安装项目依赖
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile
+
+      # 步骤 6: 生成数据库
+      - name: Generate database schema
+        run: npx drizzle-kit generate
+
+      # ‼️‼️‼️ 关键新步骤 1: 生成原生安卓项目 ‼️‼️‼️
+      # 这一步会创建 android/ 文件夹
+      - name: Generate native Android project (prebuild)
+        run: npx expo prebuild --platform android --non-interactive
+
+      # ‼️‼️‼️ 关键新步骤 2: 使用 Gradle 直接编译 APK ‼️‼️‼️
+      - name: Build APK with Gradle
+        run: |
+          cd android
+          # 赋予 gradlew 执行权限，这是一个好习惯
+          chmod +x ./gradlew
+          # 执行 assembleRelease 命令来打包发布版的 APK
+          ./gradlew assembleRelease
+          cd ..
+
+      # ‼️‼️‼️ 关键新步骤 3: 从标准路径找到 APK ‼️‼️‼️
+      # Gradle 打包后的 APK 路径是固定的，比 find 命令更可靠
+      - name: Find and rename APK
+        id: find_apk
+        run: |
+          APK_PATH="android/app/build/outputs/apk/release/app-release.apk"
+          if [ ! -f "$APK_PATH" ]; then
+            echo "::error::APK not found at standard path: $APK_PATH"
+            # 如果找不到，再尝试全局搜索作为备用方案
+            find . -name "*.apk" -type f
+            exit 1
+          fi
+          NEW_APK_NAME="app-build-${{ github.run_number }}.apk"
+          echo "Found APK at $APK_PATH"
+          mv "$APK_PATH" "$NEW_APK_NAME"
+          echo "apk_name=$NEW_APK_NAME" >> $GITHUB_OUTPUT
+
+      # 步骤 10: 创建 Release 并上传 APK (此步骤不变)
+      - name: Create GitHub Release and Upload APK
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.${{ github.run_number }}
+          name: "Release v1.0.${{ github.run_number }}"
+          body: |
+            Automated release based on commit: ${{ github.sha }}
+            Build number: ${{ github.run_number }}
+          files: ${{ steps.find_apk.outputs.apk_name }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
