@@ -31,7 +31,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20.x'
-          cache: 'yarn'
 
       # ✨ 新增的步骤在这里！✨
       - name: Enable Corepack
