@@ -1,0 +1,99 @@
+# .github/workflows/android-release.yml
+
+name: Build and Release Android APK on Push to Main
+
+# 当有代码 push 到 main 分支时，此工作流将被触发
+on:
+  push:
+    branches:
+      - main  # 如果你的主分支是 master，请修改为 master
+  workflow_dispatch:
+
+jobs:
+  build-and-release:
+    name: Build and Release APK
+    runs-on: ubuntu-latest
+
+    steps:
+      # 步骤 1: 检出你的代码
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      # 步骤 2: 设置 Java (JDK) 环境，安卓本地编译需要它
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      # 步骤 3: 设置 Node.js 环境
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+          cache: 'yarn'
+
+      # 步骤 4: 安装项目依赖
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile
+
+      # 步骤 5: 根据 README，生成数据库（如果需要的话）
+      - name: Generate database schema
+        run: npx drizzle-kit generate
+
+      # 步骤 6: 安装 EAS CLI 并动态创建 eas.json
+      # 这样你的项目里就不需要 eas.json 这个文件了
+      - name: Install EAS CLI and Generate eas.json
+        run: |
+          npm install -g eas-cli
+          echo '{
+            "cli": {
+              "version": ">= 7.6.0"
+            },
+            "build": {
+              "production": {
+                "android": {
+                  "buildType": "apk"
+                }
+              }
+            }
+          }' > eas.json
+          echo "eas.json created successfully!"
+        
+      # 步骤 7: 开始本地构建 APK
+      - name: Build Android APK (Local)
+        run: eas build --local --platform android --profile production --non-interactive
+
+      # 步骤 8: 找到编译生成的 APK 文件并重命名
+      - name: Find and rename APK
+        id: find_apk # 给这个步骤一个ID，方便后面引用它的输出
+        run: |
+          APK_PATH=$(find . -name "*.apk" -type f | head -n 1)
+          if [ -z "$APK_PATH" ]; then
+            echo "::error::APK not found!"
+            exit 1
+          fi
+          # 使用 GitHub Run Number 创建一个独一无二的文件名
+          NEW_APK_NAME="app-build-${{ github.run_number }}.apk"
+          echo "Found APK at $APK_PATH"
+          mv "$APK_PATH" "$NEW_APK_NAME"
+          echo "APK renamed to $NEW_APK_NAME"
+          # 将新文件名设置为一个输出变量
+          echo "apk_name=$NEW_APK_NAME" >> $GITHUB_OUTPUT
+
+      # 步骤 9: 自动创建 Release 并上传 APK
+      - name: Create GitHub Release and Upload APK
+        uses: softprops/action-gh-release@v2
+        with:
+          # 使用 github.run_number 自动创建递增的 tag，例如 v1.0.1, v1.0.2 ...
+          tag_name: v1.0.${{ github.run_number }}
+          # Release 的标题
+          name: "Release v1.0.${{ github.run_number }}"
+          # Release 的描述内容，这里引用了触发本次构建的 commit 信息
+          body: |
+            Automated release based on commit: ${{ github.sha }}
+            Build number: ${{ github.run_number }}
+          # 从上一步的输出中获取要上传的文件名
+          files: ${{ steps.find_apk.outputs.apk_name }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
