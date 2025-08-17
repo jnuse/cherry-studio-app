@@ -56,24 +56,21 @@ jobs:
           cat android/build.gradle >> temp_hermes_config.txt
           mv temp_hermes_config.txt android/build.gradle
 
-      # ✨✨✨ 最终修复：注入所有必需的 Gradle 配置 ✨✨✨
       - name: Configure Gradle properties
         run: |
-          # 写入性能优化参数
           echo "org.gradle.jvmargs=-Xmx4g" > android/gradle.properties
           echo "org.gradle.daemon=true" >> android/gradle.properties
           echo "org.gradle.parallel=true" >> android/gradle.properties
           echo "org.gradle.configureondemand=true" >> android/gradle.properties
-          
-          # ‼️‼️‼️ 写入解决本次错误的关键配置 ‼️‼️‼️
           echo "android.useAndroidX=true" >> android/gradle.properties
           
-          echo "Gradle properties configured successfully!"
-
+      # ✨✨✨ 最终修正：使用正确的文件名 `gradlew` ✨✨✨
       - name: Build APK with Gradle
         run: |
           cd android
-          chmod +x ./gradle.sh # gradlew on linux is a shell script
+          # 赋予正确的 gradlew 脚本执行权限
+          chmod +x ./gradlew
+          # 执行打包命令
           ./gradlew assembleRelease
           cd ..
 
