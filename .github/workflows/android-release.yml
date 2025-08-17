@@ -1,100 +1,98 @@
-# .github/workflows/android-release.yml
+# .github/workflows/deploy-pages.yml
 
-name: Build and Release Android APK (Final Polished Version)
+name: Deploy to GitHub Pages
 
 on:
-  # push:
-    # branches:
-      # - main
+  push:
+    branches:
+      - main
+      - master
   workflow_dispatch:
 
-jobs:
-  build-and-release:
-    name: Build and Release APK
-    runs-on: ubuntu-latest
+permissions:
+  contents: read
+  pages: write
+  id-token: write
 
+concurrency:
+  group: "pages"
+  cancel-in-progress: true
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
     steps:
-      - name: Check out code
+      # 1. 拉取你的仓库代码
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Java
-        uses: actions/setup-java@v4
+      # 2. 设置 pnpm 环境
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v3
         with:
-          distribution: 'temurin'
-          java-version: '17'
+          version: latest
 
-      - name: Setup Gradle Cache
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-${{ hashFiles('**/build.gradle*', '**/gradle-wrapper.properties') }}
-          restore-keys: |
-            ${{ runner.os }}-gradle-
-
+      # 3. 设置 Node.js 环境
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20.x'
+          node-version: '20'
+          cache: 'pnpm'
 
-      - name: Enable Corepack
-        run: corepack enable
-
+      # 4. 安装项目依赖
       - name: Install dependencies
-        run: yarn install --frozen-lockfile
+        run: pnpm install --frozen-lockfile
 
-      - name: Generate database schema
-        run: npx drizzle-kit generate
-        
-      - name: Generate native Android project (prebuild)
-        run: npx expo prebuild --platform android --non-interactive
-      
-      - name: Inject missing 'hermesEnabled' property
+      # 5. ✨ 智能魔法第一重：自动查找并修改 Next.js 配置 ✨
+      - name: Intelligently modify Next.js config for static export
         run: |
-          echo -e "ext {\n    hermesEnabled = true\n}\n" > temp_hermes_config.txt
-          cat android/build.gradle >> temp_hermes_config.txt
-          mv temp_hermes_config.txt android/build.gradle
+          CONFIG_FILE=""
+          if [ -f "next.config.mjs" ]; then
+            CONFIG_FILE="next.config.mjs"
+          elif [ -f "next.config.js" ]; then
+            CONFIG_FILE="next.config.js"
+          fi
 
-      - name: Configure Gradle properties
-        run: |
-          echo "org.gradle.jvmargs=-Xmx4g" > android/gradle.properties
-          echo "org.gradle.daemon=true" >> android/gradle.properties
-          echo "org.gradle.parallel=true" >> android/gradle.properties
-          echo "org.gradle.configureondemand=true" >> android/gradle.properties
-          echo "android.useAndroidX=true" >> android/gradle.properties
-          
-      # ✨✨✨ 最终修正：使用正确的文件名 `gradlew` ✨✨✨
-      - name: Build APK with Gradle
-        run: |
-          cd android
-          # 赋予正确的 gradlew 脚本执行权限
-          chmod +x ./gradlew
-          # 执行打包命令
-          ./gradlew assembleRelease
-          cd ..
-
-      - name: Find and rename APK
-        id: find_apk
-        run: |
-          APK_PATH="android/app/build/outputs/apk/release/app-release.apk"
-          if [ ! -f "$APK_PATH" ]; then
-            echo "::error::APK not found at standard path: $APK_PATH"
-            find . -name "*.apk" -type f
+          if [ -n "$CONFIG_FILE" ]; then
+            echo "Found Next.js config file: $CONFIG_FILE"
+            sed -i 's/output: "standalone"/output: "export"/' "$CONFIG_FILE"
+            echo "--- Modified $CONFIG_FILE for deployment ---"
+            cat "$CONFIG_FILE"
+          else
+            echo "Error: Could not find next.config.mjs or next.config.js"
             exit 1
           fi
-          NEW_APK_NAME="app-build-${{ github.run_number }}.apk"
-          mv "$APK_PATH" "$NEW_APK_NAME"
-          echo "apk_name=$NEW_APK_NAME" >> $GITHUB_OUTPUT
 
-      - name: Create GitHub Release and Upload APK
-        uses: softprops/action-gh-release@v2
+      # 6. ✨ 终极魔法：自动静态化所有动态路由 ✨
+      #    这个脚本会查找所有需要处理的路由文件并自动添加配置
+      - name: Make all dynamic routes compatible with static export
+        run: |
+          echo "Searching for route files to make static..."
+          find ./app -type f \( -name "route.ts" -o -name "route.js" -o -name "sitemap.ts" -o -name "sitemap.js" -o -name "robots.ts" -o -name "robots.js" \) | while read -r file; do
+            if [ -f "$file" ]; then
+              echo "--- Modifying $file ---"
+              # 在文件第一行插入 'export const dynamic = "force-static";'
+              sed -i '1i export const dynamic = "force-static";' "$file"
+              cat "$file"
+              echo "-------------------------"
+            fi
+          done
+
+      # 7. 构建静态站点 (这次，我们将见证成功！)
+      - name: Build static site
+        run: pnpm build
+
+      # 8. 配置 GitHub Pages
+      - name: Setup Pages
+        uses: actions/configure-pages@v4
+
+      # 9. 上传构建好的静态文件
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
         with:
-          tag_name: v1.0.${{ github.run_number }}
-          name: "Release v1.0.${{ github.run_number }}"
-          body: |
-            Automated release based on commit: ${{ github.sha }}
-            Build number: ${{ github.run_number }}
-          files: ${{ steps.find_apk.outputs.apk_name }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          path: './out'
+
+      # 10. 部署到 GitHub Pages
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
